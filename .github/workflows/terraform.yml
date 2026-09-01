@@ -1,0 +1,135 @@
+name: Terraform Deployment
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment"
+        required: true
+        default: "Prepod"
+        type: choice
+        options:
+          - Prepod
+          - Prod
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+
+  terraform:
+
+    name: Terraform ${{ github.event.inputs.environment || 'Prepod' }}
+
+    runs-on: [self-hosted, windows, x64]
+
+    steps:
+
+      # -----------------------------------
+      # 1. Checkout Repository
+      # -----------------------------------
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+
+      # -----------------------------------
+      # 2. Select Environment
+      # -----------------------------------
+
+      - name: Set Environment
+        shell: powershell
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+              "TF_ENV=${{ github.event.inputs.environment }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+          else {
+              "TF_ENV=Prepod" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+
+
+      # -----------------------------------
+      # 3. Check Terraform
+      # -----------------------------------
+
+      - name: Check Terraform Version
+        shell: powershell
+        run: |
+          terraform version
+
+
+      # -----------------------------------
+      # 4. Azure Login
+      # -----------------------------------
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+
+      # -----------------------------------
+      # 5. Terraform Init
+      # -----------------------------------
+
+      - name: Terraform Init
+        shell: powershell
+        working-directory: Environment/${{ env.TF_ENV }}
+        run: |
+          terraform init
+
+
+      # -----------------------------------
+      # 6. Terraform Format
+      # -----------------------------------
+
+      - name: Terraform Format Check
+        shell: powershell
+        working-directory: Environment/${{ env.TF_ENV }}
+        run: |
+          terraform fmt -check -recursive
+
+
+      # -----------------------------------
+      # 7. Terraform Validate
+      # -----------------------------------
+
+      - name: Terraform Validate
+        shell: powershell
+        working-directory: Environment/${{ env.TF_ENV }}
+        run: |
+          terraform validate
+
+
+      # -----------------------------------
+      # 8. Terraform Plan
+      # -----------------------------------
+
+      - name: Terraform Plan
+        shell: powershell
+        working-directory: Environment/${{ env.TF_ENV }}
+        run: |
+          terraform plan -out=tfplan
+
+
+      # -----------------------------------
+      # 9. Terraform Apply
+      # -----------------------------------
+
+      - name: Terraform Apply
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: powershell
+        working-directory: Environment/${{ env.TF_ENV }}
+        run: |
+          terraform apply -auto-approve tfplan
